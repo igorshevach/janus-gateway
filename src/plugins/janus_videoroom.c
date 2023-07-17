@@ -9179,7 +9179,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 		const char *request_text = json_string_value(request);
 		gboolean sdp_update = FALSE;
 
-		JANUS_LOG(LOG_PERF, "tp-thread<%p>. [%s] processing request %s .participant type %s\n",
+		JANUS_LOG(LOG_PERF, "tp-thread<%p>. [%s] janus_videoroom_message_handler. processing request %s .participant type %s\n",
 			g_thread_self,
 			msg->transaction,
 			request_text,
@@ -11950,7 +11950,6 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					g_atomic_int_set(&subscriber->answered, 1);
 					janus_mutex_unlock(&subscriber->streams_mutex);
 				}
-				JANUS_LOG(LOG_VERB, "thread<%p> [%s] end processing\n", g_thread_self(),msg->transaction);
 				return;
 			} else {
 				/* TODO We don't support anything else right now... */
@@ -12524,7 +12523,7 @@ static void janus_videoroom_tp_message_handler(gpointer data, gpointer user_data
 
 		janus_videoroom_message_handler(msg);
 
-		JANUS_LOG(LOG_PERF, "tp-thread<%p>. transaction [%s] took %"SCNi64"us\n",
+		JANUS_LOG(LOG_PERF, "janus_videoroom_tp_message_handler. tp-thread<%p>. transaction [%s] took %"SCNi64"us\n",
 				g_thread_self(),
 				msg->transaction,
 				janus_get_monotonic_time() - start);
@@ -12552,7 +12551,7 @@ static void janus_videoroom_tp_session_handler(gpointer data, gpointer user_data
 		janus_mutex_unlock(&session->mutex);
 
 		if(messages) {
-			JANUS_LOG(LOG_PERF, "tp-thread<%p>. janus_videoroom_tp_session_handler processing %d messages\n",
+			JANUS_LOG(LOG_PERF, "tp-thread<%p>. janus_videoroom_tp_session_handler: processing %d messages\n",
 				g_thread_self(),
 				g_slist_length(messages));
 			g_slist_foreach(messages,janus_videoroom_tp_message_handler,NULL);
@@ -12560,8 +12559,7 @@ static void janus_videoroom_tp_session_handler(gpointer data, gpointer user_data
 		} 
     } while(messages);
 
-    JANUS_LOG(LOG_PERF, "tp-thread<%p>. janus_videoroom_tp_session_handler exit\n",
-		g_thread_self());
+    JANUS_LOG(LOG_PERF, "tp-thread<%p>. janus_videoroom_tp_session_handler: exit\n", g_thread_self());
 
     janus_refcount_decrease(&session->ref);
 } 
