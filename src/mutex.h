@@ -111,6 +111,61 @@ typedef GCond janus_condition;
 /*! \brief Janus condition broadcast */
 #define janus_condition_broadcast(a) g_cond_broadcast(a);
 
+/*! \brief Janus mutex implementation */
+typedef GRWLock janus_rwlock;
+
+/*! \brief Janus mutex initialization */
+/*! \brief Janus mutex lock without debug */
+#define janus_rwlock_init_nodebug(a) g_rw_lock_init(a)
+/*! \brief Janus mutex lock with debug (prints the line that locked a mutex) */
+#define janus_rwlock_init_debug(a) { JANUS_PRINT("[%s:%s:%d:rw_init] %p\n", __FILE__, __FUNCTION__, __LINE__, a); g_rw_lock_init(a); }
+/*! \brief Janus mutex destruction */
+#define janus_rwlock_init(a) { if(!lock_debug) { janus_rwlock_init_nodebug(a); } else { janus_rwlock_init_debug(a); } }
+/*! \brief Janus static mutex initializer */
+#define JANUS_RWLOCK_INITIALIZER {0}
+/*! \brief Janus mutex lock without debug */
+#define janus_rwlock_destroy_nodebug(a) g_rw_lock_clear(a)
+/*! \brief Janus mutex lock with debug (prints the line that locked a mutex) */
+#define janus_rwlock_destroy_debug(a) { JANUS_PRINT("[%s:%s:%d:rw_dectroy] %p\n", __FILE__, __FUNCTION__, __LINE__, a); janus_rwlock_destroy_nodebug(a); }
+/*! \brief Janus mutex destruction */
+#define janus_rwlock_destroy(a) { if(!lock_debug) { janus_rwlock_destroy_nodebug(a); } else { janus_rwlock_destroy_debug(a); } }
+/*! \brief Janus mutex lock without debug */
+#define janus_rwlock_reader_lock_nodebug(a) g_rw_lock_reader_lock(a)
+/*! \brief Janus mutex lock with debug (prints the line that locked a mutex) */
+#define janus_rwlock_reader_lock_debug(a) { JANUS_PRINT("[%s:%s:%d:reader_lock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); janus_rwlock_reader_lock_nodebug(a); }
+/*! \brief Janus mutex lock wrapper (selective locking debug) */
+#define janus_rwlock_reader_lock(a) { if(!lock_debug) { janus_rwlock_reader_lock_nodebug(a); } else { janus_rwlock_reader_lock_debug(a); } }
+/*! \brief Janus mutex try lock without debug */
+#define janus_rwlock_reader_trylock_nodebug(a) { ret = g_rw_lock_reader_trylock(a); }
+/*! \brief Janus mutex try lock with debug (prints the line that tried to lock a mutex) */
+#define janus_rwlock_reader_trylock_debug(a) { JANUS_PRINT("[%s:%s:%d:reader_trylock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); ret = janus_rwlock_reader_trylock(a); }
+/*! \brief Janus mutex try lock wrapper (selective locking debug) */
+#define janus_rwlock_reader_trylock(a) ({ if(!lock_debug) { janus_rwlock_reader_trylock_nodebug(a); } else { janus_rwlock_reader_trylock_debug(a); } ret; })
+/*! \brief Janus mutex unlock without debug */
+#define janus_rwlock_reader_unlock_nodebug(a) g_rw_lock_reader_unlock(a)
+/*! \brief Janus mutex unlock with debug (prints the line that unlocked a mutex) */
+#define janus_rwlock_reader_unlock_debug(a) { JANUS_PRINT("[%s:%s:%d:reader_unlock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); janus_rwlock_reader_unlock_nodebug(a); }
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_reader_unlock(a) { if(!lock_debug) { janus_rwlock_reader_unlock_nodebug(a); } else { janus_rwlock_reader_unlock_debug(a); } }
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_lock_debug(a) { JANUS_PRINT("[%s:%s:%d:writer_unlock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); janus_rwlock_writer_lock_nodebug(a); }
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_lock_nodebug(a)  g_rw_lock_writer_lock(a)
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_lock(a) { if(!lock_debug) { janus_rwlock_writer_lock_nodebug(a); } else { janus_rwlock_writer_lock_debug(a); } }
+/*! \brief Janus mutex try lock without debug */
+#define janus_rwlock_writer_trylock_nodebug(a) { ret = g_rw_lock_writer_trylock(a); }
+/*! \brief Janus mutex try lock with debug (prints the line that tried to lock a mutex) */
+#define janus_rwlock_writer_trylock_debug(a) { JANUS_PRINT("[%s:%s:%d:writer_trylock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); ret = janus_rwlock_writer_trylock(a); }
+/*! \brief Janus mutex try lock wrapper (selective locking debug) */
+#define janus_rwlock_writer_trylock(a) ({ gboolean ret; if(!lock_debug) { janus_rwlock_reader_trylock_nodebug(a); } else { janus_rwlock_writer_trylock_debug(a); } ret; })
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_unlock_nodebug(a) g_rw_lock_writer_unlock(a)
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_unlock_debug(a) { JANUS_PRINT("[%s:%s:%d:writer_unlock] %p\n", __FILE__, __FUNCTION__, __LINE__, a); janus_rwlock_writer_unlock_nodebug(a); }
+/*! \brief Janus mutex unlock wrapper (selective locking debug) */
+#define janus_rwlock_writer_unlock(a) { if(!lock_debug) { janus_rwlock_writer_unlock_nodebug(a); } else { janus_rwlock_writer_unlock_debug(a); } }
+
 #endif
 
 #endif
