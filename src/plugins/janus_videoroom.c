@@ -11077,7 +11077,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				if(g_atomic_int_compare_and_exchange(&subscriber->skipped_autoupdate, 1, 0))
 					changes++;
 				if(changes == 0) {
-					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
+					janus_mutex_unlock(&subscriber->streams_mutex);
 					/* Nothing changed, just ack and don't do anything else */
 					JANUS_LOG(LOG_VERB, "No change made, skipping renegotiation\n");
 					event = json_object();
