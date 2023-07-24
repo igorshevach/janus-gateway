@@ -2285,7 +2285,7 @@ typedef struct janus_videoroom_subscriber {
 	GList *streams;				/* List of media stream subscriptions originated by this subscriber (audio, video and/or data) */
 	GHashTable *streams_byid;	/* As above, indexed by mindex */
 	GHashTable *streams_bymid;	/* As above, indexed by mid */
-	janus_mutex streams_mutex;
+	janus_rwlock streams_mutex;
 	gboolean use_msid;		/* Whether we should add custom msid attributes to offers, to match publishers and streams */
 	gboolean autoupdate;	/* Whether we should trigger a renegotiation automatically when a subscribed publisher goes away */
 	guint32 pvt_id;			/* Private ID of the participant that is subscribing (if available/provided) */
@@ -4484,9 +4484,9 @@ json_t *janus_videoroom_query_session(janus_plugin_session *handle) {
 				json_object_set_new(info, "paused", participant->paused ? json_true() : json_false());
 				if(participant->e2ee)
 					json_object_set_new(info, "e2ee", json_true());
-				janus_mutex_lock(&participant->streams_mutex);
+				janus_rwlock_reader_lock(&participant->streams_mutex);
 				json_t *media = janus_videoroom_subscriber_streams_summary(participant, FALSE, NULL);
-				janus_mutex_unlock(&participant->streams_mutex);
+				janus_rwlock_reader_unlock(&participant->streams_mutex);
 				json_object_set_new(info, "streams", media);
 			}
 			if(participant)
@@ -8636,22 +8636,22 @@ void janus_videoroom_incoming_rtcp(janus_plugin_session *handle, janus_plugin_rt
 			return;
 		}
 		/* Find the stream this packet belongs to */
-		janus_mutex_lock(&s->streams_mutex);
+		janus_rwlock_reader_lock(&s->streams_mutex);
 		janus_videoroom_subscriber_stream *ss = g_hash_table_lookup(s->streams_byid, GINT_TO_POINTER(packet->mindex));
 		if(ss == NULL || ss->publisher_streams == NULL) {
 			/* No stream..? */
-			janus_mutex_unlock(&s->streams_mutex);
+			janus_rwlock_reader_unlock(&s->streams_mutex);
 			janus_refcount_decrease_nodebug(&s->ref);
 			return;
 		}
 		janus_videoroom_publisher_stream *ps = ss->publisher_streams ? ss->publisher_streams->data : NULL;
 		if(ps == NULL || ps->type != JANUS_VIDEOROOM_MEDIA_VIDEO) {
-			janus_mutex_unlock(&s->streams_mutex);
+			janus_rwlock_reader_unlock(&s->streams_mutex);
 			janus_refcount_decrease_nodebug(&s->ref);
 			return;		/* The only feedback we handle is video related anyway... */
 		}
 		janus_refcount_increase_nodebug(&ps->ref);
-		janus_mutex_unlock(&s->streams_mutex);
+		janus_rwlock_reader_unlock(&s->streams_mutex);
 		if(janus_rtcp_has_fir(buf, len) || janus_rtcp_has_pli(buf, len)) {
 			/* We got a FIR or PLI, forward a PLI to the publisher */
 			janus_videoroom_publisher *p = ps->publisher;
@@ -8990,11 +8990,11 @@ static void janus_videoroom_hangup_media_internal(gpointer session_data) {
 			while(temp) {
 				janus_videoroom_subscriber *subscriber = (janus_videoroom_subscriber *)temp->data;
 				/* Send (or schedule) a new offer */
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_reader_lock(&subscriber->streams_mutex);
 				if(!subscriber->autoupdate || room == NULL || g_atomic_int_get(&room->destroyed)) {
 					/* ... unless we've been asked not to, or there's no room (anymore) */
 					g_atomic_int_set(&subscriber->skipped_autoupdate, 1);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 					janus_refcount_decrease(&subscriber->session->ref);
 					janus_refcount_decrease(&subscriber->ref);
 					temp = temp->next;
@@ -9003,7 +9003,7 @@ static void janus_videoroom_hangup_media_internal(gpointer session_data) {
 				if(!g_atomic_int_get(&subscriber->answered)) {
 					/* We're still waiting for an answer to a previous offer, postpone this */
 					g_atomic_int_set(&subscriber->pending_offer, 1);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				} else {
 					json_t *event = json_object();
 					json_object_set_new(event, "videoroom", json_string("updated"));
@@ -9016,7 +9016,7 @@ static void janus_videoroom_hangup_media_internal(gpointer session_data) {
 					json_object_set_new(event, "streams", media);
 					/* Generate a new offer */
 					json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 					/* How long will the Janus core take to push the event? */
 					gint64 start = janus_get_monotonic_time();
 					int res = gateway->push_event(subscriber->session->handle, &janus_videoroom_plugin, NULL, event, jsep);
@@ -9058,7 +9058,7 @@ static void janus_videoroom_hangup_media_internal(gpointer session_data) {
 			g_atomic_int_set(&subscriber->pending_offer, 0);
 			g_atomic_int_set(&subscriber->pending_restart, 0);
 			/* Get rid of streams */
-			janus_mutex_lock(&subscriber->streams_mutex);
+			janus_rwlock_writer_lock(&subscriber->streams_mutex);
 			GList *temp = subscriber->streams;
 			while(temp) {
 				janus_videoroom_subscriber_stream *s = (janus_videoroom_subscriber_stream *)temp->data;
@@ -9088,7 +9088,7 @@ static void janus_videoroom_hangup_media_internal(gpointer session_data) {
 			subscriber->streams = NULL;
 			g_hash_table_remove_all(subscriber->streams_byid);
 			g_hash_table_remove_all(subscriber->streams_bymid);
-			janus_mutex_unlock(&subscriber->streams_mutex);
+			janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 			janus_refcount_decrease(&subscriber->ref);
 		}
 		/* TODO Should we close the handle as well? */
@@ -9905,7 +9905,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					NULL, (GDestroyNotify)janus_videoroom_subscriber_stream_destroy);
 				subscriber->streams_bymid = g_hash_table_new_full(g_str_hash, g_str_equal,
 					(GDestroyNotify)g_free, (GDestroyNotify)janus_videoroom_subscriber_stream_unref);
-				janus_mutex_init(&subscriber->streams_mutex);
+				janus_rwlock_init(&subscriber->streams_mutex);
 				g_atomic_int_set(&subscriber->destroyed, 0);
 				janus_refcount_init(&subscriber->ref, janus_videoroom_subscriber_free);
 				janus_refcount_increase(&subscriber->ref);
@@ -10121,7 +10121,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					json_object_set_new(event, "id", string_ids ? json_string(feed_id_str) : json_integer(feed_id));
 					json_object_set_new(event, "warning", json_string("deprecated_api"));
 				}
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_reader_lock(&subscriber->streams_mutex);
 				json_t *media = janus_videoroom_subscriber_streams_summary(subscriber, legacy, event);
 				json_t *media_event = NULL;
 				if(notify_events && gateway->events_is_enabled())
@@ -10131,7 +10131,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				JANUS_LOG(LOG_VERB, "transaction %s Preparing JSON event as a reply\n",msg->transaction);
 				/* Negotiate by crafting a new SDP matching the subscriptions */
 				json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				/* How long will the Janus core take to push the event? */
 				g_atomic_int_set(&session->hangingup, 0);
 				gint64 start = janus_get_monotonic_time();
@@ -10847,7 +10847,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				 * handle the unsubscribe first, and the subscribe only after that */
 				int changes = 0;
 				size_t i = 0;
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_reader_lock(&subscriber->streams_mutex);
 				if(unsubscribe) {
 					/* Remove the specified subscriptions */
 					for(i=0; i<json_array_size(unsub_feeds); i++) {
@@ -11077,7 +11077,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				if(g_atomic_int_compare_and_exchange(&subscriber->skipped_autoupdate, 1, 0))
 					changes++;
 				if(changes == 0) {
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 					/* Nothing changed, just ack and don't do anything else */
 					JANUS_LOG(LOG_VERB, "No change made, skipping renegotiation\n");
 					event = json_object();
@@ -11103,7 +11103,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				if(!g_atomic_int_get(&subscriber->answered)) {
 					/* We're still waiting for an answer to a previous offer, postpone this */
 					g_atomic_int_set(&subscriber->pending_offer, 1);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 					JANUS_LOG(LOG_VERB, "Post-poning new offer, waiting for previous answer\n");
 					/* Send a temporary event */
 					event = json_object();
@@ -11133,7 +11133,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				json_object_set_new(event, "streams", media);
 				/* Generate a new offer */
 				json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				/* How long will the Janus core take to push the event? */
 				gint64 start = janus_get_monotonic_time();
 				int res = gateway->push_event(msg->handle, &janus_videoroom_plugin, msg->transaction, event, jsep);
@@ -11222,7 +11222,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					json_object_set_new(root, "streams", streams);
 				}
 				/* Validate all the streams we need to configure */
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_writer_lock(&subscriber->streams_mutex);
 				size_t i = 0;
 				size_t streams_size = json_array_size(streams);
 				for(i=0; i<streams_size; i++) {
@@ -11272,7 +11272,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					}
 				}
 				if(error_code != 0) {
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 					janus_refcount_decrease(&subscriber->ref);
 					goto error;
 				}
@@ -11470,12 +11470,12 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 						/* We're still waiting for an answer to a previous offer, postpone this */
 						g_atomic_int_set(&subscriber->pending_offer, 1);
 						g_atomic_int_set(&subscriber->pending_restart, 1);
-						janus_mutex_unlock(&subscriber->streams_mutex);
+						janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 						JANUS_LOG(LOG_VERB, "Post-poning new ICE restart offer, waiting for previous answer\n");
 						return;
 					}
 					json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 					if(do_restart)
 						json_object_set_new(jsep, "restart", json_true());
 					/* How long will the Janus core take to push the event? */
@@ -11487,7 +11487,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					/* Done */
 					return;
 				}
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 			} else if(!strcasecmp(request_text, "pause")) {
 				/* Stop receiving the publisher streams for a while */
 				subscriber->paused = TRUE;
@@ -11701,7 +11701,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				 * notice that no renegotiation happens, we just switch the sources */
 				int changes = 0;
 				gboolean update = FALSE;
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_writer_lock(&subscriber->streams_mutex);
 				for(i=0; i<json_array_size(feeds); i++) {
 					json_t *s = json_array_get(feeds, i);
 					/* Look for the specific subscription mid to update */
@@ -11801,7 +11801,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 						janus_refcount_decrease(&stream->ref);
 					janus_refcount_decrease(&stream->ref);
 				}
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 				/* Decrease the references we took before */
 				while(publishers) {
 					janus_videoroom_publisher *publisher = (janus_videoroom_publisher *)publishers->data;
@@ -11817,12 +11817,12 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				json_object_set_new(event, "room", string_ids ?
 					json_string(subscriber->room_id_str) : json_integer(subscriber->room_id));
 				json_object_set_new(event, "changes", json_integer(changes));
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_reader_lock(&subscriber->streams_mutex);
 				json_t *media = janus_videoroom_subscriber_streams_summary(subscriber, FALSE, NULL);
 				json_t *media_event = NULL;
 				if(notify_events && gateway->events_is_enabled())
 					media_event = json_deep_copy(media);
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				json_object_set_new(event, "streams", media);
 				/* Also notify event handlers */
 				if(notify_events && gateway->events_is_enabled()) {
@@ -11837,11 +11837,11 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 				/* Check if we need a renegotiation as well */
 				if(update) {
 					/* We do */
-					janus_mutex_lock(&subscriber->streams_mutex);
+					janus_rwlock_writer_lock(&subscriber->streams_mutex);
 					if(!g_atomic_int_get(&subscriber->answered)) {
 						/* We're still waiting for an answer to a previous offer, postpone this */
 						g_atomic_int_set(&subscriber->pending_offer, 1);
-						janus_mutex_unlock(&subscriber->streams_mutex);
+						janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 						JANUS_LOG(LOG_VERB, "Post-poning new offer, waiting for previous answer\n");
 					} else {
 						json_t *revent = json_object();
@@ -11855,7 +11855,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 						json_object_set_new(revent, "streams", media);
 						/* Generate a new offer */
 						json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-						janus_mutex_unlock(&subscriber->streams_mutex);
+						janus_rwlock_writer_unlock(&subscriber->streams_mutex);
 						/* How long will the Janus core take to push the event? */
 						gint64 start = janus_get_monotonic_time();
 						int res = gateway->push_event(msg->handle, &janus_videoroom_plugin, msg->transaction, revent, jsep);
@@ -11938,7 +11938,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					/* Shouldn't happen? */
 					return;
 				}
-				janus_mutex_lock(&subscriber->streams_mutex);
+				janus_rwlock_reader_lock(&subscriber->streams_mutex);
 				/* Mark all streams that were answered to as ready */
 				char error_str[512];
 				janus_sdp *answer = janus_sdp_parse(msg_sdp, error_str, sizeof(error_str));
@@ -11970,7 +11970,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					/* Do we need an ICE restart as well? */
 					if(g_atomic_int_compare_and_exchange(&subscriber->pending_restart, 1, 0))
 						json_object_set_new(jsep, "restart", json_true());
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 					/* How long will the Janus core take to push the event? */
 					gint64 start = janus_get_monotonic_time();
 					int res = gateway->push_event(session->handle, &janus_videoroom_plugin, NULL, event, jsep);
@@ -11989,7 +11989,7 @@ static void janus_videoroom_message_handler(janus_videoroom_message *msg) {
 					}
 				} else {
 					g_atomic_int_set(&subscriber->answered, 1);
-					janus_mutex_unlock(&subscriber->streams_mutex);
+					janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				}
 				return;
 			} else {
@@ -13471,11 +13471,11 @@ static void *janus_videoroom_remote_publisher_thread(void *user_data) {
 		while(temp) {
 			janus_videoroom_subscriber *subscriber = (janus_videoroom_subscriber *)temp->data;
 			/* Send (or schedule) a new offer */
-			janus_mutex_lock(&subscriber->streams_mutex);
+			janus_rwlock_reader_lock(&subscriber->streams_mutex);
 			if(!g_atomic_int_get(&subscriber->answered)) {
 				/* We're still waiting for an answer to a previous offer, postpone this */
 				g_atomic_int_set(&subscriber->pending_offer, 1);
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 			} else {
 				json_t *event = json_object();
 				json_object_set_new(event, "videoroom", json_string("updated"));
@@ -13488,7 +13488,7 @@ static void *janus_videoroom_remote_publisher_thread(void *user_data) {
 				json_object_set_new(event, "streams", media);
 				/* Generate a new offer */
 				json_t *jsep = janus_videoroom_subscriber_offer(subscriber);
-				janus_mutex_unlock(&subscriber->streams_mutex);
+				janus_rwlock_reader_unlock(&subscriber->streams_mutex);
 				/* How long will the Janus core take to push the event? */
 				gint64 start = janus_get_monotonic_time();
 				int res = gateway->push_event(subscriber->session->handle, &janus_videoroom_plugin, NULL, event, jsep);
