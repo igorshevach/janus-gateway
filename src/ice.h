@@ -401,7 +401,7 @@ struct janus_ice_handle {
 	/*! \brief In case this session must be saved to text2pcap, the instance to dump packets to */
 	janus_text2pcap *text2pcap;
 	/*! \brief Mutex to lock/unlock the ICE session */
-	janus_mutex mutex;
+	janus_rwlock mutex;
 	/*! \brief Whether a close_pc was requested recently on the PeerConnection */
 	volatile gint closepc;
 	/*! \brief Atomic flag to check if this instance has been destroyed */

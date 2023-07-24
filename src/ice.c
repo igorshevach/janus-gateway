@@ -1351,7 +1351,7 @@ janus_ice_handle *janus_ice_handle_create(void *core_session, const char *opaque
 	handle->app_handle = NULL;
 	handle->queued_candidates = g_async_queue_new();
 	handle->queued_packets = g_async_queue_new();
-	janus_mutex_init(&handle->mutex);
+	janus_rwlock_init(&handle->mutex);
 	janus_session_handles_insert(session, handle);
 	return handle;
 }
@@ -1536,7 +1536,7 @@ gint janus_ice_handle_destroy(void *core_session, janus_ice_handle *handle) {
 static void janus_ice_handle_free(const janus_refcount *handle_ref) {
 	janus_ice_handle *handle = janus_refcount_containerof(handle_ref, janus_ice_handle, ref);
 	/* This stack can be destroyed, free all the resources */
-	janus_mutex_lock(&handle->mutex);
+	janus_rwlock_writer_lock(&handle->mutex);
 	if(handle->queued_candidates != NULL) {
 		janus_ice_clear_queued_candidates(handle);
 		g_async_queue_unref(handle->queued_candidates);
@@ -1553,7 +1553,7 @@ static void janus_ice_handle_free(const janus_refcount *handle_ref) {
 		g_main_context_unref(handle->mainctx);
 		handle->mainctx = NULL;
 	}
-	janus_mutex_unlock(&handle->mutex);
+	janus_rwlock_writer_unlock(&handle->mutex);
 	janus_ice_webrtc_free(handle);
 	JANUS_LOG(LOG_INFO, "[%"SCNu64"] Handle and related resources freed; %p %p\n", handle->handle_id, handle, handle->session);
 	/* Finally, unref the session and free the handle */
@@ -1622,14 +1622,14 @@ void janus_ice_webrtc_hangup(janus_ice_handle *handle, const char *reason) {
 static void janus_ice_webrtc_free(janus_ice_handle *handle) {
 	if(handle == NULL)
 		return;
-	janus_mutex_lock(&handle->mutex);
+	janus_rwlock_writer_lock(&handle->mutex);
 	if(!handle->agent_created) {
 		janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEW_DATACHAN_SDP);
 		janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_READY);
 		janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_CLEANING);
 		janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_HAS_AGENT);
 		janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_E2EE);
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_writer_unlock(&handle->mutex);
 		return;
 	}
 	handle->agent_created = 0;
@@ -1694,7 +1694,7 @@ static void janus_ice_webrtc_free(janus_ice_handle *handle) {
 		janus_ice_notify_hangup(handle, handle->hangup_reason);
 	}
 	handle->hangup_reason = NULL;
-	janus_mutex_unlock(&handle->mutex);
+	janus_rwlock_writer_unlock(&handle->mutex);
 	JANUS_LOG(LOG_INFO, "[%"SCNu64"] WebRTC resources freed; %p %p\n", handle->handle_id, handle, handle->session);
 }
 
@@ -2537,7 +2537,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 								handle->handle_id, packet_ssrc, medium->mid);
 							gboolean found = FALSE;
 							/* Check if simulcasting is involved */
-							janus_mutex_lock(&handle->mutex);
+							janus_rwlock_reader_lock(&handle->mutex);
 							if(medium->rid[0] == NULL || pc->rid_ext_id < 1) {
 								medium->ssrc_peer[0] = packet_ssrc;
 								found = TRUE;
@@ -2579,7 +2579,7 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 									}
 								}
 							}
-							janus_mutex_unlock(&handle->mutex);
+							janus_rwlock_reader_unlock(&handle->mutex);
 							if(found) {
 								g_hash_table_insert(pc->media_byssrc, GINT_TO_POINTER(packet_ssrc), medium);
 								janus_refcount_increase(&medium->ref);
@@ -2751,9 +2751,9 @@ static void janus_ice_cb_nice_recv(NiceAgent *agent, guint stream_id, guint comp
 							handle->handle_id, medium->rtx_payload_type);
 					}
 					if(medium->codec == NULL) {
-						janus_mutex_lock(&handle->mutex);
+						janus_rwlock_reader_lock(&handle->mutex);
 						const char *codec = janus_get_codec_from_pt(handle->local_sdp, medium->payload_type);
-						janus_mutex_unlock(&handle->mutex);
+						janus_rwlock_reader_unlock(&handle->mutex);
 						if(codec != NULL)
 							medium->codec = g_strdup(codec);
 					}
@@ -4044,7 +4044,7 @@ static gboolean janus_ice_outgoing_transport_wide_cc_feedback(gpointer user_data
 	janus_ice_peerconnection_medium *medium = NULL;
 	if(pc) {
 		/* Find inbound video medium */
-		janus_mutex_lock(&handle->mutex);
+		janus_rwlock_reader_lock(&handle->mutex);
 		GHashTableIter iter;
 		gpointer value;
 		g_hash_table_iter_init(&iter, pc->media_bymid);
@@ -4067,7 +4067,7 @@ static gboolean janus_ice_outgoing_transport_wide_cc_feedback(gpointer user_data
 					break;
 			}
 		}
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_reader_unlock(&handle->mutex);
 	}
 
 	if(medium == NULL) {
@@ -4686,9 +4686,9 @@ static gboolean janus_ice_outgoing_traffic_handle(janus_ice_handle *handle, janu
 							handle->handle_id, medium->rtx_payload_type);
 					}
 					if(medium->codec == NULL) {
-						janus_mutex_lock(&handle->mutex);
+						janus_rwlock_reader_lock(&handle->mutex);
 						const char *codec = janus_get_codec_from_pt(handle->local_sdp, medium->payload_type);
-						janus_mutex_unlock(&handle->mutex);
+						janus_rwlock_reader_unlock(&handle->mutex);
 						if(codec != NULL)
 							medium->codec = g_strdup(codec);
 					}
@@ -4972,9 +4972,9 @@ void janus_ice_relay_rtcp(janus_ice_handle *handle, janus_plugin_rtcp *packet) {
 	if(!handle || packet == NULL || packet->buffer == NULL)
 		return;
 	/* Find the right medium instance */
-	janus_mutex_lock(&handle->mutex);
+	janus_rwlock_reader_lock(&handle->mutex);
 	if(!handle->pc || !handle->pc->media || !handle->pc->media_bytype) {
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_reader_unlock(&handle->mutex);
 		return;
 	}
 	janus_ice_peerconnection_medium *medium = (packet->mindex != -1 ?
@@ -4982,11 +4982,11 @@ void janus_ice_relay_rtcp(janus_ice_handle *handle, janus_plugin_rtcp *packet) {
 			g_hash_table_lookup(handle->pc->media_bytype,
 				GINT_TO_POINTER(packet->video ? JANUS_MEDIA_VIDEO : JANUS_MEDIA_AUDIO)));
 	if(!medium) {
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_reader_unlock(&handle->mutex);
 		return;
 	}
 	janus_refcount_increase(&medium->ref);
-	janus_mutex_unlock(&handle->mutex);
+	janus_rwlock_reader_unlock(&handle->mutex);
 	janus_ice_relay_rtcp_internal(handle, medium, packet, TRUE);
 	/* If this is a PLI and we're simulcasting, send a PLI on other layers as well */
 	if(packet->video && janus_rtcp_has_pli(packet->buffer, packet->length)) {
@@ -5123,10 +5123,10 @@ void janus_ice_dtls_handshake_done(janus_ice_handle *handle) {
 	JANUS_LOG(LOG_VERB, "[%"SCNu64"] The DTLS handshake for the component %d in stream %d has been completed\n",
 		handle->handle_id, handle->pc->component_id, handle->pc->stream_id);
 	/* Check if all components are ready */
-	janus_mutex_lock(&handle->mutex);
+	janus_rwlock_writer_lock(&handle->mutex);
 	if(janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_READY)) {
 		/* Already notified */
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_writer_unlock(&handle->mutex);
 		return;
 	}
 	janus_flags_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_READY);
@@ -5148,7 +5148,7 @@ void janus_ice_dtls_handshake_done(janus_ice_handle *handle) {
 	g_source_set_callback(handle->stats_source, janus_ice_outgoing_stats_handle, handle, NULL);
 	g_source_set_priority(handle->stats_source, G_PRIORITY_DEFAULT);
 	g_source_attach(handle->stats_source, handle->mainctx);
-	janus_mutex_unlock(&handle->mutex);
+	janus_rwlock_writer_unlock(&handle->mutex);
 	JANUS_LOG(LOG_INFO, "[%"SCNu64"] The DTLS handshake has been completed\n", handle->handle_id);
 	/* Notify the plugin that the WebRTC PeerConnection is ready to be used */
 	janus_plugin *plugin = (janus_plugin *)handle->app;

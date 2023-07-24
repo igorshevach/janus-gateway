@@ -339,7 +339,7 @@ void janus_rtp_simulcasting_prepare(json_t *simulcast, int *rid_ext_id, uint32_t
  * @param[in] ssrcs The list of simulcast SSRCs to cleanup, if any
  * @param[in] rids The list of rids to cleanup, if any (items will be freed and NULL-ed)
  * @param[in] rid_mutex A mutex that must be acquired before cleaning up, if any */
-void janus_rtp_simulcasting_cleanup(int *rid_ext_id, uint32_t *ssrcs, char **rids, janus_mutex *rid_mutex);
+void janus_rtp_simulcasting_cleanup(int *rid_ext_id, uint32_t *ssrcs, char **rids, janus_rwlock *rid_mutex);
 
 /*! \brief Process an RTP packet, and decide whether this should be relayed or not, updating the context accordingly
  * \note Calling this method resets the \c changed_substream , \c changed_temporal and \c need_pli
@@ -355,7 +355,7 @@ void janus_rtp_simulcasting_cleanup(int *rid_ext_id, uint32_t *ssrcs, char **rid
  * @returns TRUE if the packet should be relayed, FALSE if it should be dropped instead */
 gboolean janus_rtp_simulcasting_context_process_rtp(janus_rtp_simulcasting_context *context,
 	char *buf, int len, uint32_t *ssrcs, char **rids,
-	janus_videocodec vcodec, janus_rtp_switching_context *sc, janus_mutex *rid_mutex);
+	janus_videocodec vcodec, janus_rtp_switching_context *sc, janus_rwlock *rid_mutex);
 ///@}
 
 /** @name Janus AV1-SVC processing methods

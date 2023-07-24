@@ -932,9 +932,9 @@ static void janus_sdp_mdns_resolved(GObject *source_object, GAsyncResult *res, g
 		/* Replace the .local address with the resolved one in the candidate string */
 		mc->candidate = janus_string_replace(mc->candidate, mc->local, resolved);
 		/* Parse the candidate again */
-		janus_mutex_lock(&mc->handle->mutex);
+		janus_rwlock_writer_lock(&mc->handle->mutex);
 		(void)janus_sdp_parse_candidate(mc->handle->pc, mc->candidate, 1);
-		janus_mutex_unlock(&mc->handle->mutex);
+		janus_rwlock_writer_unlock(&mc->handle->mutex);
 	}
 	g_free(resolved);
 	/* Get rid of the helper struct */

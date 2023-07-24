@@ -1428,7 +1428,7 @@ int janus_process_incoming_request(janus_request *request) {
 			/* Check if we're renegotiating (if we have an answer, we did an offer/answer round already) */
 			renegotiation = janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_NEGOTIATED);
 			/* Check the JSEP type */
-			janus_mutex_lock(&handle->mutex);
+			janus_rwlock_writer_lock(&handle->mutex);
 			gboolean offer = FALSE;
 			if(!strcasecmp(jsep_type, "offer")) {
 				offer = TRUE;
@@ -1445,7 +1445,7 @@ int janus_process_incoming_request(janus_request *request) {
 				ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_JSEP_UNKNOWN_TYPE, "JSEP error: unknown message type '%s'", jsep_type);
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				janus_mutex_unlock(&handle->mutex);
+				janus_rwlock_writer_unlock(&handle->mutex);
 				goto jsondone;
 			}
 			json_t *sdp = json_object_get(jsep, "sdp");
@@ -1463,7 +1463,7 @@ int janus_process_incoming_request(janus_request *request) {
 				ret = janus_process_error_string(request, session_id, transaction_text, JANUS_ERROR_JSEP_INVALID_SDP, error_str);
 				g_free(jsep_type);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				janus_mutex_unlock(&handle->mutex);
+				janus_rwlock_writer_unlock(&handle->mutex);
 				goto jsondone;
 			}
 			/* Notify event handlers */
@@ -1488,7 +1488,7 @@ int janus_process_incoming_request(janus_request *request) {
 						g_free(jsep_type);
 						janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
 						ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNKNOWN, "Error setting ICE locally");
-						janus_mutex_unlock(&handle->mutex);
+						janus_rwlock_writer_unlock(&handle->mutex);
 						goto jsondone;
 					}
 				} else {
@@ -1499,7 +1499,7 @@ int janus_process_incoming_request(janus_request *request) {
 						g_free(jsep_type);
 						janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
 						ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNEXPECTED_ANSWER, "Unexpected ANSWER (did we offer?)");
-						janus_mutex_unlock(&handle->mutex);
+						janus_rwlock_writer_unlock(&handle->mutex);
 						goto jsondone;
 					}
 				}
@@ -1604,7 +1604,7 @@ int janus_process_incoming_request(janus_request *request) {
 					g_free(jsep_type);
 					janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
 					ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_UNEXPECTED_ANSWER, "Error processing SDP");
-					janus_mutex_unlock(&handle->mutex);
+					janus_rwlock_writer_unlock(&handle->mutex);
 					goto jsondone;
 				}
 				if(janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_ICE_RESTART)) {
@@ -1664,7 +1664,7 @@ int janus_process_incoming_request(janus_request *request) {
 			char *tmp = handle->remote_sdp;
 			handle->remote_sdp = g_strdup(jsep_sdp);
 			g_free(tmp);
-			janus_mutex_unlock(&handle->mutex);
+			janus_rwlock_writer_unlock(&handle->mutex);
 			/* Anonymize SDP */
 			if(janus_sdp_anonymize(parsed_sdp) < 0) {
 				/* Invalid SDP */
@@ -1698,7 +1698,7 @@ int janus_process_incoming_request(janus_request *request) {
 		if(jsep_sdp_stripped) {
 			body_jsep = json_pack("{ssss}", "type", jsep_type, "sdp", jsep_sdp_stripped);
 			/* Check if simulcasting is enabled in one of the media streams */
-			janus_mutex_lock(&handle->mutex);
+			janus_rwlock_reader_lock(&handle->mutex);
 			if(handle->pc == NULL) {
 				ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_WEBRTC_STATE, "Invalid PeerConnection");
 				json_decref(body);
@@ -1706,7 +1706,7 @@ int janus_process_incoming_request(janus_request *request) {
 				g_free(jsep_type);
 				g_free(jsep_sdp_stripped);
 				janus_flags_clear(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_PROCESSING_OFFER);
-				janus_mutex_unlock(&handle->mutex);
+				janus_rwlock_reader_unlock(&handle->mutex);
 				goto jsondone;
 			}
 			json_t *simulcast = NULL;
@@ -1744,7 +1744,7 @@ int janus_process_incoming_request(janus_request *request) {
 					json_array_append_new(simulcast, msc);
 				}
 			}
-			janus_mutex_unlock(&handle->mutex);
+			janus_rwlock_reader_unlock(&handle->mutex);
 			if(simulcast)
 				json_object_set_new(body_jsep, "simulcast", simulcast);
 			/* Check if this is a renegotiation or update */
@@ -1831,7 +1831,7 @@ int janus_process_incoming_request(janus_request *request) {
 			ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_WEBRTC_STATE, "Still cleaning a previous session");
 			goto jsondone;
 		}
-		janus_mutex_lock(&handle->mutex);
+		janus_rwlock_writer_lock(&handle->mutex);
 		if(!janus_flags_is_set(&handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_TRICKLE)) {
 			/* It looks like this peer supports Trickle, after all */
 			JANUS_LOG(LOG_VERB, "Handle %"SCNu64" supports trickle even if it didn't negotiate it...\n", handle->handle_id);
@@ -1871,14 +1871,14 @@ int janus_process_incoming_request(janus_request *request) {
 			const char *error_string = NULL;
 			if((error = janus_ice_trickle_parse(handle, candidate, &error_string)) != 0) {
 				ret = janus_process_error(request, session_id, transaction_text, error, "%s", error_string);
-				janus_mutex_unlock(&handle->mutex);
+				janus_rwlock_writer_unlock(&handle->mutex);
 				goto jsondone;
 			}
 		} else {
 			/* We got multiple candidates in an array */
 			if(!json_is_array(candidates)) {
 				ret = janus_process_error(request, session_id, transaction_text, JANUS_ERROR_INVALID_ELEMENT_TYPE, "candidates is not an array");
-				janus_mutex_unlock(&handle->mutex);
+				janus_rwlock_writer_unlock(&handle->mutex);
 				goto jsondone;
 			}
 			JANUS_LOG(LOG_VERB, "Got multiple candidates (%zu)\n", json_array_size(candidates));
@@ -1894,7 +1894,7 @@ int janus_process_incoming_request(janus_request *request) {
 		}
 
 trickledone:
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_writer_unlock(&handle->mutex);
 		/* We reply right away, not to block the web server... */
 		json_t *reply = janus_create_message("ack", session_id, transaction_text);
 		/* Send the success reply */
@@ -2959,7 +2959,7 @@ int janus_process_incoming_admin_request(janus_request *request) {
 		if(session->source && session->source->transport)
 			json_object_set_new(info, "session_transport", json_string(session->source->transport->get_package()));
 		janus_mutex_unlock(&session->mutex);
-		janus_mutex_lock(&handle->mutex);
+		janus_rwlock_reader_lock(&handle->mutex);
 		json_object_set_new(info, "handle_id", json_integer(handle_id));
 		if(handle->opaque_id)
 			json_object_set_new(info, "opaque_id", json_string(handle->opaque_id));
@@ -3045,7 +3045,7 @@ int janus_process_incoming_admin_request(janus_request *request) {
 				json_object_set_new(info, "webrtc", p);
 		}
 info_done:
-		janus_mutex_unlock(&handle->mutex);
+		janus_rwlock_reader_unlock(&handle->mutex);
 		/* Prepare JSON reply */
 		json_t *reply = janus_create_message("success", session_id, transaction_text);
 		json_object_set_new(reply, "handle_id", json_integer(handle_id));
@@ -3730,7 +3730,7 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 				}
 			}
 		}
-		janus_mutex_lock(&ice_handle->mutex);
+		janus_rwlock_reader_lock(&ice_handle->mutex);
 		if(ice_handle->agent == NULL) {
 			/* We still need to configure the WebRTC stuff: negotiate RFC4588 by default */
 			janus_flags_set(&ice_handle->webrtc_flags, JANUS_ICE_HANDLE_WEBRTC_RFC4588_RTX);
@@ -3738,14 +3738,14 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 			if(janus_ice_setup_local(ice_handle, FALSE, TRUE, JANUS_DTLS_ROLE_ACTPASS) < 0) {
 				JANUS_LOG(LOG_ERR, "[%"SCNu64"] Error setting ICE locally\n", ice_handle->handle_id);
 				janus_sdp_destroy(parsed_sdp);
-				janus_mutex_unlock(&ice_handle->mutex);
+				janus_rwlock_reader_unlock(&ice_handle->mutex);
 				return NULL;
 			}
 			/* Create medium instances */
 			if(janus_sdp_process_local(ice_handle, parsed_sdp, FALSE) < 0) {
 				JANUS_LOG(LOG_ERR, "[%"SCNu64"] Error processing SDP\n", ice_handle->handle_id);
 				janus_sdp_destroy(parsed_sdp);
-				janus_mutex_unlock(&ice_handle->mutex);
+				janus_rwlock_reader_unlock(&ice_handle->mutex);
 				return NULL;
 			}
 		} else {
@@ -3756,7 +3756,7 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 				if(janus_sdp_process_local(ice_handle, parsed_sdp, TRUE) < 0) {
 					JANUS_LOG(LOG_ERR, "[%"SCNu64"] Error processing SDP\n", ice_handle->handle_id);
 					janus_sdp_destroy(parsed_sdp);
-					janus_mutex_unlock(&ice_handle->mutex);
+					janus_rwlock_reader_unlock(&ice_handle->mutex);
 					return NULL;
 				}
 			}
@@ -3825,14 +3825,14 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 			ice_handle->pc->playoutdelay_ext_id = playoutdelay_ext_id;
 		if(ice_handle->pc && ice_handle->pc->dependencydesc_ext_id != dependencydesc_ext_id)
 			ice_handle->pc->dependencydesc_ext_id = dependencydesc_ext_id;
-		janus_mutex_unlock(&ice_handle->mutex);
+		janus_rwlock_reader_unlock(&ice_handle->mutex);
 	} else {
 		/* Check if the answer does contain the mid/rid/repaired-rid/abs-send-time/twcc extmaps */
 		int mindex = 0;
 		gboolean do_mid = FALSE, do_rid = FALSE, do_repaired_rid = FALSE,
 			do_dd = FALSE, do_twcc = FALSE, do_abs_send_time = FALSE;
 		GList *temp = parsed_sdp->m_lines;
-		janus_mutex_lock(&ice_handle->mutex);
+		janus_rwlock_reader_lock(&ice_handle->mutex);
 		while(temp) {
 			janus_sdp_mline *m = (janus_sdp_mline *)temp->data;
 			janus_ice_peerconnection_medium *medium = ice_handle->pc ?
@@ -3937,7 +3937,7 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 			ice_handle->pc->dependencydesc_ext_id = 0;
 		if(!do_abs_send_time && ice_handle->pc)
 			ice_handle->pc->abs_send_time_ext_id = 0;
-		janus_mutex_unlock(&ice_handle->mutex);
+		janus_rwlock_reader_unlock(&ice_handle->mutex);
 	}
 	if(!updating && !janus_ice_is_full_trickle_enabled()) {
 		/* Wait for candidates-done callback */
@@ -3978,12 +3978,12 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 	if(offer && restart)
 		janus_ice_restart(ice_handle);
 	/* Add our details */
-	janus_mutex_lock(&ice_handle->mutex);
+	janus_rwlock_writer_lock(&ice_handle->mutex);
 	janus_ice_peerconnection *pc = ice_handle->pc;
 	if(pc == NULL) {
 		JANUS_LOG(LOG_ERR, "[%"SCNu64"] No WebRTC PeerConnection\n", ice_handle->handle_id);
 		janus_sdp_destroy(parsed_sdp);
-		janus_mutex_unlock(&ice_handle->mutex);
+		janus_rwlock_writer_unlock(&ice_handle->mutex);
 		return NULL;
 	}
 	/* Iterate on all media */
@@ -4086,7 +4086,7 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 		/* Couldn't merge SDP */
 		JANUS_LOG(LOG_ERR, "[%"SCNu64"] Error merging SDP\n", ice_handle->handle_id);
 		janus_sdp_destroy(parsed_sdp);
-		janus_mutex_unlock(&ice_handle->mutex);
+		janus_rwlock_writer_unlock(&ice_handle->mutex);
 		return NULL;
 	}
 	janus_sdp_destroy(parsed_sdp);
@@ -4120,7 +4120,7 @@ json_t *janus_plugin_handle_sdp(janus_plugin_session *plugin_session, janus_plug
 	json_object_set_new(jsep, "sdp", json_string(sdp_merged));
 	char *tmp = ice_handle->local_sdp;
 	ice_handle->local_sdp = sdp_merged;
-	janus_mutex_unlock(&ice_handle->mutex);
+	janus_rwlock_writer_unlock(&ice_handle->mutex);
 	g_free(tmp);
 	return jsep;
 }
